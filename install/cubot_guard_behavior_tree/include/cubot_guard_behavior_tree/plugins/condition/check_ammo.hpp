@@ -1,0 +1,1 @@
+/home/cubot/NAV/src/cubot_guard_behavior_tree/include/cubot_guard_behavior_tree/plugins/condition/check_ammo.hpp

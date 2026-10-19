@@ -1,0 +1,1 @@
+/home/cubot/NAV/build/small_gicp_relocalization/ament_cmake_environment_hooks/local_setup.bash

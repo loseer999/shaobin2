@@ -1,0 +1,59 @@
+ekf_fusion_node:
+  ros__parameters:
+    frequency: 50.0                  # 高频运行，保证 map->odom TF 的丝滑
+    sensor_timeout: 2.0                  # GICP 低频输入 (~0.5Hz)，避免超时丢弃
+    two_d_mode: false                # 保持 3D 模式，利用 LIO 的 Z 轴
+    publish_tf: true                 # 【全栈模式】EKF 独占发布 map→odom (GICP /tf 已 remap 到 /tf_null)
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link       # 物理底盘（以 Point-LIO 的 child_frame 为准）
+    world_frame: map                 # EKF 负责发布 map -> odom
+
+    # ----------------------------------------------------
+    # Odom 0: 来自 Point-LIO 的高频连续里程计 (极度信任)
+    # ----------------------------------------------------
+    odom0: /Odometry
+    odom0_config: [true,  true,  true,   # X, Y, Z
+                   true,  true,  true,   # Roll, Pitch, Yaw
+                   true,  true,  true,   # dX, dY, dZ
+                   true,  true,  true,   # dRoll, dPitch, dYaw
+                   false, false, false]
+    odom0_differential: false
+    odom0_relative: false
+    odom0_pose_rejection_threshold: 100.0   # 信任 LIO，不拒绝
+    odom0_twist_rejection_threshold: 100.0
+
+    # ----------------------------------------------------
+    # Pose 0: 来自 small_gicp 的低频绝对位姿 (防跳变核心)
+    # ----------------------------------------------------
+    pose0: /pose                     # 确保匹配 small_gicp 输出的位姿话题名
+    pose0_config: [true,  true,  false,  # 只信任 GICP 的 XY，Z 轴交由 LIO 处理
+                   false, false, true,   # 只信任 GICP 的 Yaw，忽略 Roll和Pitch
+                   false, false, false,
+                   false, false, false,
+                   false, false, false]
+    pose0_differential: false
+    pose0_relative: false
+    # 【最核心参数】：如果 GICP 的匹配结果和预测位置差距过大(瞬移)，直接丢弃该帧！
+    pose0_rejection_threshold: 1.2   
+
+    use_control: false
+    
+    # 基础过程噪声协方差 (保持默认即可)
+    process_noise_covariance: [
+      0.05, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+      0.0, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+      0.0, 0.0, 0.06, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+      0.0, 0.0, 0.0, 0.03, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+      0.0, 0.0, 0.0, 0.0, 0.03, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+      0.0, 0.0, 0.0, 0.0, 0.0, 0.06, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+      0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.025, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+      0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.025, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+      0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.04, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+      0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0,
+      0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.0,
+      0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.02, 0.0, 0.0, 0.0,
+      0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0,
+      0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.0,
+      0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.015
+    ]

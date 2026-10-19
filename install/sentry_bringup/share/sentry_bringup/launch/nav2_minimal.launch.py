@@ -1,0 +1,1 @@
+/home/cubot/NAV/src/sentry_bringup/launch/nav2_minimal.launch.py

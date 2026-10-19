@@ -1,0 +1,1 @@
+/home/cubot/NAV/src/small_gicp_relocalization/launch/small_gicp_relocalization_launch.py

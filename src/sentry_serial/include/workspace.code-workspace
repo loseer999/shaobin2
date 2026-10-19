@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "../../../../cubot_guard_behavior_tree"
+		},
+		{
+			"path": "../../.."
+		},
+		{
+			"path": "../../../../cubot_guard_navigation"
+		},
+		{
+			"path": "../../../../../cubot_guard_navigation"
+		}
+	],
+	"settings": {}
+}

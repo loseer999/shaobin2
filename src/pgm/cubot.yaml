@@ -1,0 +1,6 @@
+image: cubot.pgm
+resolution: 0.05
+origin: [-5.074565, -9.163053, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196

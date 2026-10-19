@@ -1,0 +1,431 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ============================================================ -->
+<!-- 主版本 (v4)                                                   -->
+<!-- 导入全部 RX 黑板变量: hp, ltime, protect, ammo, defense, outpost_hp  -->
+<!-- defense: 0=无, 1=保护泉水, 2=保护英雄                            -->
+<!-- 姿态控制: SetStance(1:进攻,2:防御,3:移动, 4:强化进攻,5:强化防御,6:强化移动) -->
+<!-- 备用版本: sentinel_main_tree_backup.xml                        -->
+<!-- ============================================================ -->
+<root BTCPP_format="4" main_tree_to_execute="SentinelMainTree">
+
+  <!-- ============================================================ -->
+  <!-- 撤退子树：中继点1 → 补给点(停10s) → 中继点1                    -->
+  <!-- ============================================================ -->
+  <BehaviorTree ID="RetreatSubTree">
+    <Sequence name="Retreat_Sequence">
+      <WaitForRevive hp="{hp}" base_wait_time="5000" max_wait_time="30000" name="Wait_If_Dead"/>
+
+      <!-- 前往中继点1 -->
+      <SetArrive arrive="0" name="Set_Arrive_Navigating_Retreat_R1"/>
+      <SetBlackboard output_key="current_stage" value="retreat_to_relay1"/>
+
+      <RecoveryNode number_of_retries="5" name="Recover_Retreat_R1">
+        <CubotRateController hz="1" name="Rate_Retreat_R1">
+          <NavigateToPose goal="{relay_point1_pose}" server_name="navigate_to_pose" name="Nav_Retreat_R1"/>
+        </CubotRateController>
+        <Sequence name="Recovery_Retreat_R1">
+          <ClearEntireCostmap name="Clear_Costmap_Retreat_R1" service_name="local_costmap/clear_entirely_local_costmap"/>
+          <Wait wait_duration="1.0" name="Wait_Retreat_R1"/>
+          <BackUp backup_dist="0.3" backup_speed="0.1" name="BackUp_Retreat_R1"/>
+        </Sequence>
+      </RecoveryNode>
+
+      <!-- 前往补给点 -->
+      <SetArrive arrive="0" name="Set_Arrive_Navigating_Retreat_Supply"/>
+      <SetBlackboard output_key="current_stage" value="retreat_to_supply"/>
+
+      <RecoveryNode number_of_retries="5" name="Recover_Retreat_Supply">
+        <CubotRateController hz="1" name="Rate_Retreat_Supply">
+          <NavigateToPose goal="{supply_zone_pose}" server_name="navigate_to_pose" name="Nav_Retreat_Supply"/>
+        </CubotRateController>
+        <Sequence name="Recovery_Retreat_Supply">
+          <ClearEntireCostmap name="Clear_Costmap_Retreat_Supply" service_name="local_costmap/clear_entirely_local_costmap"/>
+          <Wait wait_duration="1.0" name="Wait_Retreat_Supply"/>
+          <BackUp backup_dist="0.3" backup_speed="0.1" name="BackUp_Retreat_Supply"/>
+        </Sequence>
+      </RecoveryNode>
+
+      <!-- 补给点等待 10 秒 -->
+      <SetArrive arrive="1" name="Set_Arrive_Done_Supply"/>
+      <SetBlackboard output_key="current_stage" value="waiting_at_supply"/>
+      <Wait wait_duration="10.0" name="Wait_10s_At_Supply"/>
+
+      <!-- 返回中继点1 -->
+      <SetArrive arrive="0" name="Set_Arrive_Navigating_Return"/>
+      <SetBlackboard output_key="current_stage" value="retreat_to_relay1"/>
+
+      <RecoveryNode number_of_retries="5" name="Recover_Retreat_R1_Return">
+        <CubotRateController hz="1" name="Rate_Retreat_R1_Return">
+          <NavigateToPose goal="{relay_point1_pose}" server_name="navigate_to_pose" name="Nav_Retreat_R1_Return"/>
+        </CubotRateController>
+        <Sequence name="Recovery_Retreat_R1_Return">
+          <ClearEntireCostmap name="Clear_Costmap_Retreat_R1_Return" service_name="local_costmap/clear_entirely_local_costmap"/>
+          <Wait wait_duration="1.0" name="Wait_Retreat_R1_Return"/>
+          <BackUp backup_dist="0.3" backup_speed="0.1" name="BackUp_Retreat_R1_Return"/>
+        </Sequence>
+      </RecoveryNode>
+
+      <!-- 到达中继点1：释放自锁，ReactiveFallback 重新决策 -->
+      <SetArrive arrive="1" name="Set_Arrive_Done_Retreat"/>
+      <SetStance stance="1" name="Set_Stance_Attack_After_Retreat"/>
+      <SetBlackboard output_key="current_stage" value="holding_relay1"/>
+      <SetBlackboard output_key="busy" value="0"/>
+      <SetBlackboard output_key="attack_done" value="1"/>
+      <SetBlackboard output_key="retreat_active" value="0"/>
+    </Sequence>
+  </BehaviorTree>
+
+  <!-- ============================================================ -->
+  <!-- 保护泉水子树：中继点1 → 堡垒点占点防御                         -->
+  <!-- ============================================================ -->
+  <BehaviorTree ID="DefenseSubTree">
+    <Sequence name="Defense_Sequence">
+      <!-- 移动中：进攻姿态 + 不强化 -->
+      <SetStance stance="1" name="Set_Stance_Attack_Defense"/>
+      <SetArrive arrive="0" name="Set_Arrive_Navigating_Defense"/>
+      <SetBlackboard output_key="current_stage" value="defense_to_relay1"/>
+
+      <!-- 前往中继点1 -->
+      <RecoveryNode number_of_retries="5" name="Recover_Defense_R1">
+        <CubotRateController hz="1" name="Rate_Defense_R1">
+          <NavigateToPose goal="{relay_point1_pose}" server_name="navigate_to_pose" name="Nav_Defense_R1"/>
+        </CubotRateController>
+        <Sequence name="Recovery_Defense_R1">
+          <ClearEntireCostmap name="Clear_Costmap_Defense_R1" service_name="local_costmap/clear_entirely_local_costmap"/>
+          <Wait wait_duration="1.0" name="Wait_Defense_R1"/>
+          <BackUp backup_dist="0.3" backup_speed="0.1" name="BackUp_Defense_R1"/>
+        </Sequence>
+      </RecoveryNode>
+
+      <!-- 前往堡垒点 -->
+      <SetBlackboard output_key="current_stage" value="defense_to_fortress"/>
+
+      <RecoveryNode number_of_retries="5" name="Recover_Defense_Fortress">
+        <CubotRateController hz="1" name="Rate_Defense_Fortress">
+          <NavigateToPose goal="{guard_pose}" server_name="navigate_to_pose" name="Nav_Defense_Fortress"/>
+        </CubotRateController>
+        <Sequence name="Recovery_Defense_Fortress">
+          <ClearEntireCostmap name="Clear_Costmap_Defense" service_name="local_costmap/clear_entirely_local_costmap"/>
+          <Wait wait_duration="1.0" name="Wait_Defense"/>
+          <BackUp backup_dist="0.3" backup_speed="0.1" name="BackUp_Defense"/>
+        </Sequence>
+      </RecoveryNode>
+
+      <!-- 到达堡垒：进攻强化 15 秒 → 进攻普通模式 -->
+      <SetArrive arrive="1" name="Set_Arrive_Done_Defense"/>
+      <SetStance stance="4" name="Set_Stance_Attack_Boost_At_Fortress"/>
+      <SetBlackboard output_key="current_stage" value="holding_fortress_boost"/>
+      <Wait wait_duration="15.0" name="Wait_Attack_Boost_15s"/>
+
+      <!-- 进攻强化结束，切换进攻普通模式 -->
+      <SetStance stance="1" name="Set_Stance_Attack_Normal_Fortress"/>
+      <SetBlackboard output_key="current_stage" value="holding_fortress"/>
+
+      <!-- 堡垒上 HP>=270 时：金身模式 (防御+强化) -->
+      <Sequence name="Golden_Body_Mode">
+        <CheckHP hp="{hp}" hp_threshold="269" name="Check_HP_Above_270"/>
+        <SetStance stance="5" name="Set_Stance_Defense_Golden"/>
+        <SetBlackboard output_key="current_stage" value="golden_body_mode"/>
+        <Sleep msec="86400000" name="Golden_Hold_Forever"/>
+      </Sequence>
+
+      <!-- HP<270 时保持进攻普通模式驻守 -->
+      <Sleep msec="86400000" name="Fortress_Hold_Forever"/>
+    </Sequence>
+  </BehaviorTree>
+
+  <!-- ============================================================ -->
+  <!-- 保护英雄子树：中继点1 → 前哨点 → 英雄保护点                    -->
+  <!-- ============================================================ -->
+  <BehaviorTree ID="HeroGuardSubTree">
+    <Sequence name="HeroGuard_Sequence">
+      <!-- 移动中：移动姿态 + 强化 -->
+      <SetStance stance="6" name="Set_Stance_Move_Boost_HeroGuard"/>
+      <SetArrive arrive="0" name="Set_Arrive_Navigating_HeroGuard"/>
+      <SetBlackboard output_key="current_stage" value="hero_guard_to_relay1"/>
+
+      <!-- 前往中继点1 -->
+      <RecoveryNode number_of_retries="5" name="Recover_Hero_R1">
+        <CubotRateController hz="1" name="Rate_Hero_R1">
+          <NavigateToPose goal="{relay_point1_pose}" server_name="navigate_to_pose" name="Nav_Hero_R1"/>
+        </CubotRateController>
+        <Sequence name="Recovery_Hero_R1">
+          <ClearEntireCostmap name="Clear_Costmap_Hero_R1" service_name="local_costmap/clear_entirely_local_costmap"/>
+          <Wait wait_duration="1.0" name="Wait_Hero_R1"/>
+          <BackUp backup_dist="0.3" backup_speed="0.1" name="BackUp_Hero_R1"/>
+        </Sequence>
+      </RecoveryNode>
+
+      <!-- 前往前哨点 -->
+      <SetBlackboard output_key="current_stage" value="hero_guard_to_outpost"/>
+
+      <RecoveryNode number_of_retries="5" name="Recover_Hero_Outpost">
+        <CubotRateController hz="1" name="Rate_Hero_Outpost">
+          <NavigateToPose goal="{outpost_point_pose}" server_name="navigate_to_pose" name="Nav_Hero_Outpost"/>
+        </CubotRateController>
+        <Sequence name="Recovery_Hero_Outpost">
+          <ClearEntireCostmap name="Clear_Costmap_Hero_Outpost" service_name="local_costmap/clear_entirely_local_costmap"/>
+          <Wait wait_duration="1.0" name="Wait_Hero_Outpost"/>
+          <BackUp backup_dist="0.3" backup_speed="0.1" name="BackUp_Hero_Outpost"/>
+        </Sequence>
+      </RecoveryNode>
+
+      <!-- 前往英雄保护点 -->
+      <SetBlackboard output_key="current_stage" value="hero_guard_to_point"/>
+
+      <RecoveryNode number_of_retries="5" name="Recover_HeroGuard">
+        <CubotRateController hz="1" name="Rate_HeroGuard">
+          <NavigateToPose goal="{hero_guard_point_pose}" server_name="navigate_to_pose" name="Nav_HeroGuard"/>
+        </CubotRateController>
+        <Sequence name="Recovery_HeroGuard">
+          <ClearEntireCostmap name="Clear_Costmap_HeroGuard" service_name="local_costmap/clear_entirely_local_costmap"/>
+          <Wait wait_duration="1.0" name="Wait_HeroGuard"/>
+          <BackUp backup_dist="0.3" backup_speed="0.1" name="BackUp_HeroGuard"/>
+        </Sequence>
+      </RecoveryNode>
+
+      <!-- 到达英雄保护点：进攻姿态 + 关闭强化 -->
+      <SetArrive arrive="1" name="Set_Arrive_Done_HeroGuard"/>
+      <SetStance stance="1" name="Set_Stance_Attack_At_HeroGuard"/>
+      <SetBlackboard output_key="current_stage" value="holding_hero_guard"/>
+      <Sleep msec="86400000" name="HeroGuard_Hold_Forever"/>
+    </Sequence>
+  </BehaviorTree>
+
+  <!-- ============================================================ -->
+  <!-- 进攻子树：中继点1 → 前哨点                                     -->
+  <!-- ============================================================ -->
+  <BehaviorTree ID="AttackSubTree">
+    <Sequence name="Attack_Sequence">
+      <SetStance stance="3" name="Set_Stance_Move_Attack"/>
+      <SetArrive arrive="0" name="Set_Arrive_Navigating_Attack"/>
+      <SetBlackboard output_key="current_stage" value="attack_to_relay"/>
+
+      <!-- 前往中继点1 -->
+      <RecoveryNode number_of_retries="2" name="Recover_Relay1">
+        <CubotRateController hz="1" name="Rate_Relay1">
+          <NavigateToPose goal="{relay_point1_pose}" server_name="navigate_to_pose" name="Nav_To_Relay1"/>
+        </CubotRateController>
+        <Sequence name="Recovery_Relay1">
+          <ClearEntireCostmap name="Clear_Costmap_Relay1" service_name="local_costmap/clear_entirely_local_costmap"/>
+          <Wait wait_duration="1.0" name="Wait_Relay1"/>
+          <BackUp backup_dist="0.3" backup_speed="0.1" name="BackUp_Relay1"/>
+        </Sequence>
+      </RecoveryNode>
+
+      <SetArrive arrive="1" name="Set_Arrive_At_Relay1"/>
+      <SetBlackboard output_key="current_stage" value="holding_at_relay1"/>
+
+      <!-- 前往前哨点 -->
+      <SetStance stance="3" name="Set_Stance_Move_To_Outpost"/>
+      <SetArrive arrive="0" name="Set_Arrive_Navigating_To_Outpost"/>
+      <SetBlackboard output_key="current_stage" value="attack_to_outpost"/>
+
+      <RecoveryNode number_of_retries="2" name="Recover_Attack_Outpost">
+        <CubotRateController hz="1" name="Rate_Attack_Outpost">
+          <NavigateToPose goal="{outpost_point_pose}" server_name="navigate_to_pose" name="Nav_Attack_Outpost"/>
+        </CubotRateController>
+        <Sequence name="Recovery_Attack_Outpost">
+          <ClearEntireCostmap name="Clear_Costmap_Outpost" service_name="local_costmap/clear_entirely_local_costmap"/>
+          <Wait wait_duration="1.0" name="Wait_Outpost"/>
+          <BackUp backup_dist="0.3" backup_speed="0.1" name="BackUp_Outpost"/>
+        </Sequence>
+      </RecoveryNode>
+
+      <!-- 到达前哨点: 进攻姿态驻守 -->
+      <SetArrive arrive="1" name="Set_Arrive_Done_Attack"/>
+      <SetStance stance="1" name="Set_Stance_Attack_At_Outpost"/>
+      <SetBlackboard output_key="current_stage" value="holding_outpost"/>
+      <SetBlackboard output_key="busy" value="0"/>
+      <SetBlackboard output_key="attack_active" value="0"/>
+      <SetBlackboard output_key="attack_done" value="1"/>
+    </Sequence>
+  </BehaviorTree>
+
+  <!-- ============================================================ -->
+  <!-- 主行为树                                                     -->
+  <!-- ============================================================ -->
+  <BehaviorTree ID="SentinelMainTree">
+    <Sequence name="Init_Then_Loop">
+      <!-- 一次性初始化 -->
+      <SetBlackboard output_key="retreat_active" value="0"/>
+      <SetBlackboard output_key="attack_done" value="0"/>
+      <SetBlackboard output_key="busy" value="0"/>
+      <SetBlackboard output_key="hero_active" value="0"/>
+      <SetBlackboard output_key="spring_active" value="0"/>
+      <SetBlackboard output_key="outpost_active" value="0"/>
+
+    <Parallel success_count="2" failure_count="1" name="Main_Parallel">
+
+      <!-- 状态更新节点（持续运行），导入全部 6 个 RX 黑板变量 -->
+      <Update name="Status_Update"
+              hp_topic="/referee/hp"
+              time_topic="/referee/game_time"
+              protect_topic="/referee/protect"
+              ammo_topic="/referee/ammo"
+              defense_topic="/referee/defense"
+              outpost_hp_topic="/referee/outpost_hp"
+              hp="{hp}"
+              ltime="{ltime}"
+              protect="{protect}"
+              ammo="{ammo}"
+              defense="{defense}"
+              outpost_hp="{outpost_hp}"
+              supply_zone_pose="{supply_zone_pose}"
+              relay_point1_pose="{relay_point1_pose}"
+              relay_point2_pose="{relay_point2_pose}"
+              relay_point3_pose="{relay_point3_pose}"
+              relay_point4_pose="{relay_point4_pose}"
+              guard_pose="{guard_pose}"
+              hero_guard_point_pose="{hero_guard_point_pose}"
+              outpost_point_pose="{outpost_point_pose}"
+              supply_zone_pose_str="-1.4568;-5.5871;0.0;0.0;0.0;0.0;1.0"
+              relay_point1_pose_str="4.790084362030029;0.9957132339477539;0.0;0.0;0.0;0.0;1.0"
+              relay_point2_pose_str="4.4073;0.8186;0.0;0.0;0.0;0.0;1.0"
+              relay_point3_pose_str="-0.2968;-2.7871;0.0;0.0;0.0;0.0;1.0"
+              relay_point4_pose_str="-1.4476;-4.4197;0.0;0.0;0.0;0.0;1.0"
+              guard_pose_str="2.766448497772217;-0.7507659196853638;0.0;0.0;0.0;0.0;1.0"
+              hero_guard_point_pose_str="3.4241912364959717;4.643098831176758;0.0;0.0;0.0;0.0;1.0"
+              outpost_point_pose_str="7.29874849319458;4.425487041473389;0.0;0.0;0.0;0.0;1.0"/>
+
+      <Repeat num_cycles="-1" name="Main_Loop">
+        <Fallback name="Game_State_Fallback">
+
+          <Sequence name="Game_Active">
+            <Inverter name="Check_Game_Started">
+              <CheckTime time="{ltime}" time_threshold="0.5" name="Check_Time_Above_Zero"/>
+            </Inverter>
+
+            <ReactiveFallback name="Main_Decision">
+
+              <!-- ============ P1: 撤退 ============ -->
+              <Sequence name="Emergency_Retreat">
+                <Fallback name="Retreat_Entry">
+                  <CheckSignal signal="{retreat_active}" target_value="1" name="Check_Already_Retreating"/>
+                  <Sequence name="Trigger_Retreat">
+                    <Inverter name="Check_Not_Busy_P1">
+                      <CheckSignal signal="{busy}" target_value="1" name="Check_Busy_P1"/>
+                    </Inverter>
+                    <Fallback name="Retreat_Trigger">
+                      <CheckHP hp="{hp}" hp_threshold="250" name="Check_Low_HP"/>
+                      <CheckAmmo ammo="{ammo}" ammo_threshold="1" name="Check_Low_Ammo"/>
+                    </Fallback>
+                    <SetBlackboard output_key="busy" value="1"/>
+                    <SetBlackboard output_key="retreat_active" value="1"/>
+                  </Sequence>
+                </Fallback>
+                <SubTree ID="RetreatSubTree" _autoremap="true" name="Call_Retreat"/>
+              </Sequence>
+
+              <!-- ============ P2: 保护英雄 (defense=2) ============ -->
+              <Sequence name="Protect_Hero">
+                <Fallback name="Hero_Entry">
+                  <CheckSignal signal="{hero_active}" target_value="1" name="Check_Already_Hero"/>
+                  <Sequence name="Trigger_Hero">
+                    <Inverter name="Check_Not_Busy_P2">
+                      <CheckSignal signal="{busy}" target_value="1" name="Check_Busy_P2"/>
+                    </Inverter>
+                    <CheckSignal signal="{defense}" target_value="2" name="Check_Defense_Hero"/>
+                    <SetBlackboard output_key="busy" value="1"/>
+                    <SetBlackboard output_key="hero_active" value="1"/>
+                  </Sequence>
+                </Fallback>
+                <SubTree ID="HeroGuardSubTree" _autoremap="true" name="Call_HeroGuard"/>
+              </Sequence>
+
+              <!-- ============ P3: 保护泉水 (defense=1 或 protect=1, 比赛开始后) ============ -->
+              <Sequence name="Protect_Spring">
+                <Fallback name="Spring_Entry">
+                  <CheckSignal signal="{spring_active}" target_value="1" name="Check_Already_Spring"/>
+                  <Sequence name="Trigger_Spring">
+                    <Inverter name="Check_Not_Busy_P3">
+                      <CheckSignal signal="{busy}" target_value="1" name="Check_Busy_P3"/>
+                    </Inverter>
+                    <CheckTime time="{ltime}" time_threshold="0.5" name="Check_Game_Started_P3"/>
+                    <Fallback name="Protect_Spring_Trigger">
+                      <CheckSignal signal="{defense}" target_value="1" name="Check_Defense_Spring"/>
+                      <CheckSignal signal="{protect}" target_value="1" name="Check_Protect_Spring"/>
+                    </Fallback>
+                    <SetBlackboard output_key="busy" value="1"/>
+                    <SetBlackboard output_key="spring_active" value="1"/>
+                  </Sequence>
+                </Fallback>
+                <SubTree ID="DefenseSubTree" _autoremap="true" name="Call_Defense"/>
+              </Sequence>
+
+              <!-- ============ P4: 前往前哨点驻守 (剩余时间>240s) ============ -->
+              <Sequence name="Go_To_Outpost">
+                <Fallback name="Outpost_Entry">
+                  <CheckSignal signal="{outpost_active}" target_value="1" name="Check_Already_Outpost"/>
+                  <Sequence name="Trigger_Outpost">
+                    <Inverter name="Check_Not_Busy_P4">
+                      <CheckSignal signal="{busy}" target_value="1" name="Check_Busy_P4"/>
+                    </Inverter>
+                    <CheckTime time="{ltime}" time_threshold="240" name="Check_Time_Above_240"/>
+                    <SetBlackboard output_key="busy" value="1"/>
+                    <SetBlackboard output_key="outpost_active" value="1"/>
+                  </Sequence>
+                </Fallback>
+                <SetStance stance="3" name="Set_Stance_Move_To_Outpost"/>
+                <SetArrive arrive="0" name="Set_Arrive_Navigating_Outpost"/>
+                <SetBlackboard output_key="current_stage" value="move_to_outpost"/>
+
+                <RecoveryNode number_of_retries="5" name="Recover_Outpost">
+                  <CubotRateController hz="1" name="Rate_Outpost">
+                    <NavigateToPose goal="{outpost_point_pose}" server_name="navigate_to_pose" name="Nav_To_Outpost"/>
+                  </CubotRateController>
+                  <Sequence name="Recovery_Outpost">
+                    <ClearEntireCostmap name="Clear_Costmap_Outpost" service_name="local_costmap/clear_entirely_local_costmap"/>
+                    <Wait wait_duration="1.0" name="Wait_Outpost_Recover"/>
+                    <BackUp backup_dist="0.3" backup_speed="0.1" name="BackUp_Outpost"/>
+                  </Sequence>
+                </RecoveryNode>
+
+                <SetArrive arrive="1" name="Set_Arrive_Done_Outpost"/>
+                <SetStance stance="1" name="Set_Stance_Attack_Outpost"/>
+                <SetBlackboard output_key="current_stage" value="holding_outpost"/>
+                <SetBlackboard output_key="busy" value="0"/>
+                <SetBlackboard output_key="outpost_active" value="0"/>
+                <Sleep msec="86400000" name="Outpost_Hold_Forever"/>
+              </Sequence>
+
+              <!-- ============ P5: 开局进攻 ============ -->
+              <Sequence name="Initial_Attack">
+                <Fallback name="Attack_Entry">
+                  <CheckSignal signal="{attack_active}" target_value="1" name="Check_Already_Attack"/>
+                  <Sequence name="Trigger_Attack">
+                    <Inverter name="Check_Not_Busy_P5">
+                      <CheckSignal signal="{busy}" target_value="1" name="Check_Busy_P5"/>
+                    </Inverter>
+                    <Inverter name="Inv_Attack_Done">
+                      <CheckSignal signal="{attack_done}" target_value="1" name="Check_Attack_Done"/>
+                    </Inverter>
+                    <SetBlackboard output_key="busy" value="1"/>
+                    <SetBlackboard output_key="attack_active" value="1"/>
+                  </Sequence>
+                </Fallback>
+                <SetBlackboard output_key="current_stage" value="initial_attack"/>
+                <SubTree ID="AttackSubTree" _autoremap="true" name="Call_Initial_Attack"/>
+                <SetBlackboard output_key="attack_done" value="1"/>
+              </Sequence>
+
+              <!-- ============ 默认: 驻守点保持进攻姿态 ============ -->
+              <Sequence name="Default_Station_Hold">
+                <SetStance stance="1" name="Set_Stance_Attack_Default"/>
+                <SetBlackboard output_key="current_stage" value="holding_station"/>
+                <Sleep msec="86400000" name="Default_Hold_Forever"/>
+              </Sequence>
+
+            </ReactiveFallback>
+          </Sequence>
+
+          <Sleep msec="100" name="Wait_For_Game_Start"/>
+
+        </Fallback>
+      </Repeat>
+
+    </Parallel>
+    </Sequence>
+  </BehaviorTree>
+
+</root>

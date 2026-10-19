@@ -1,0 +1,149 @@
+import os
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch_ros.actions import Node
+
+def generate_launch_description():
+    
+    # 获取 sentry_bringup 包的共享目录
+    bringup_dir = get_package_share_directory('sentry_bringup')
+    
+    # 找到你刚写的 EKF 配置文件
+    ekf_config_path = os.path.join(bringup_dir, 'config', 'ekf_fusion.yaml')
+    
+    # 假设你已经把建好的 pcd 地图放在了 maps 文件夹下
+    pcd_map_path = os.path.join(bringup_dir, 'maps', 'cubot.PCD')
+
+    # 【T5 可视化】默认启用 RViz + PCD publisher (肉眼对比 红色先验地图 / 绿色实时点云)
+    rviz_config = os.path.join(bringup_dir, 'config', 't5_compare.rviz')
+
+    return LaunchDescription([
+        
+        # 1. 点云滤波器 (截取 Point-LIO 的点云，滤除车体，输出给后端)
+        Node(
+            package='cpp_lidar_filter',
+            executable='lidar_filter_node',
+            name='cpp_lidar_filter',
+            output='screen',
+            parameters=[{
+                'input_topic': '/cloud_registered',   # Point-LIO 输出 (PointCloud2, base_link 系)
+                'output_topic': '/cloud_filtered',    # 输出给 GICP / pointcloud_to_laserscan
+                'max_range': 12.0,                    # 远点过滤: 以雷达为中心保留 ±12m 立方 (PCD 覆盖范围 X<=13.3m, Y<=11.7m → 略内收)
+            }]
+        ),
+
+        # 2. 3D点云降维 2D (喂给 Nav2 局部避障)
+        Node(
+            package='pointcloud_to_laserscan',
+            executable='pointcloud_to_laserscan_node',
+            name='pointcloud_to_laserscan',
+            output='screen',
+            remappings=[
+                ('cloud_in', '/cloud_filtered'), # 订阅滤除车体后的干净点云
+                ('scan', '/scan')                # 输出 2D 雷达数据给 Nav2
+            ],
+            parameters=[{
+                'target_frame': 'base_footprint_stabilized', # 投影到虚拟稳定层
+                'transform_tolerance': 0.01,
+                'min_height': 0.1,  # 过滤掉地面的点
+                'max_height': 1.5,  # 过滤掉太高的点
+                'angle_min': -3.14159,
+                'angle_max': 3.14159,
+                'angle_increment': 0.0087,
+                'scan_time': 0.1,
+                'range_min': 0.3,
+                'range_max': 15.0,
+                'use_inf': True,
+            }]
+        ),
+
+        # 3. 核心大招：速度与坐标系旋转解耦中心
+        Node(
+            package='fake_vel_transform',
+            executable='fake_vel_transform_node',
+            name='fake_vel_transform',
+            output='screen',
+            parameters=[{
+                'robot_base_frame': 'base_link',                  # 你的物理底盘
+                'fake_robot_base_frame': 'base_footprint_stabilized', # 生成的不自转虚拟层
+                'odom_topic': '/Odometry',                        # LIO 的里程计
+                'input_cmd_vel_topic': '/cmd_vel_nav',            # Nav2 规划出的平移速度
+                'cmd_spin_topic': '/chassis/target_angular_z',    # 行为树下发的小陀螺角速度
+                'output_cmd_vel_topic': '/serial/cmd_vel',        # 发给串口底层的合成速度
+                'init_spin_speed': 0.0                            # 默认不自转
+            }]
+        ),
+
+        # 4. 全局匹配重定位 (small_gicp)
+        Node(
+            package='small_gicp_relocalization',
+            executable='small_gicp_relocalization_node',
+            name='small_gicp_node',
+            output='screen',
+            parameters=[{
+                'prior_pcd_file': pcd_map_path,            # 先验地图
+                'input_cloud_topic': '/cloud_filtered',    # 吃滤除车体后的干净点云
+                'map_frame': 'map',
+                'odom_frame': 'odom',
+                'base_frame': 'base_link',                 # GICP 内部查 base_frame→lidar_frame TF 变换 PCD
+                'robot_base_frame': 'base_link',           # 机器人主体 frame (发 map→odom 用)
+                'lidar_frame': 'base_link',                # 【关键】PCD 实际在 odom 系下, 不是 lidar 系;
+                                                           #  设为 base_link 让 TF=identity, 避免多余平移
+                # 【点云稀疏适配 (Point-LIO /cloud_registered 经 0.5m 网格量化, 单帧 ~322 点)】
+                'registered_leaf_size': 0.05,              # source 不下采样 (0.05 几乎保留原点)
+                'global_leaf_size': 0.10,                  # target 适度下采样 (原 0.25 太稀疑似)
+                'num_neighbors': 15,                       # 协方差估计邻居数 (放宽 10→15, 适配大场景)
+                'max_dist_sq': 1.0,                        # GICP 内部点对应阈值 (1m² = 1m 半径), 库默认值
+                'convergence_radius': 0.2,                 # 【用户要求】业务收敛半径: 单帧 Δt 超 0.2m 视为跳变 → 拒绝并计入失败
+                'max_consecutive_failures': 100,           # 【用户要求】连续失败达 100 帧才升级为 ERROR (之前仅 WARN)
+                'init_pose': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # 机器人启动位置 ≈ 地图原点 (建图起点), 地图未旋转 yaw=0
+            }],
+            remappings=[
+                # 【临时】让 GICP 直接发 map→odom 的 TF;
+                # 原设计是 remap 到 /tf_null 让 EKF 接管, 但 small_gicp 未发 /pose topic,
+                # EKF 拿不到 pose0 数据 → 不发 map→odom → map frame 不存在。
+                # 后续可给 small_gicp 加 PoseWithCovarianceStamped publisher 后再恢复 /tf_null。
+                ('/tf', '/tf'),
+            ]
+        ),
+
+        # 5. EKF 状态融合 (终极防线：防止被遮挡时瞬移)
+        Node(
+            package='robot_localization',
+            executable='ekf_node',
+            name='ekf_fusion_node',
+            output='screen',
+            parameters=[ekf_config_path],
+            remappings=[
+                ('/tf', '/tf'),
+                ('/tf_static', '/tf_static')
+            ]
+        ),
+
+        # 6. 【可视化】发布先验 PCD 地图为话题 /prior_map (frame_id=map, 1Hz)
+        #    【重要】 PCD 是绝对地图 → 挂 map 帧 (不是 odom);
+        #    这样机器人重启位置不在建图起点时, RViz 仍能看到红绿对齐 (靠 GICP 发的 map→odom)
+        Node(
+            package='pcl_ros',
+            executable='pcd_to_pointcloud',
+            name='pcd_publisher',
+            output='screen',
+            parameters=[{
+                'file_name': pcd_map_path,
+                'tf_frame': 'map',
+                'publishing_period_ms': 1000,
+            }],
+            remappings=[
+                ('cloud_pcd', '/prior_map'),
+            ],
+        ),
+
+        # 7. 【可视化】RViz2 红绿点云对比 (Fixed Frame=odom, 不依赖 GICP 发 map→odom)
+        Node(
+            package='rviz2',
+            executable='rviz2',
+            name='t5_compare_rviz',
+            output='screen',
+            arguments=['-d', rviz_config],
+        )
+    ])

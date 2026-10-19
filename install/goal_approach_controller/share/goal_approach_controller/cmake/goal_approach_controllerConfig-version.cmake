@@ -1,0 +1,1 @@
+/home/cubot/NAV/build/goal_approach_controller/ament_cmake_core/goal_approach_controllerConfig-version.cmake

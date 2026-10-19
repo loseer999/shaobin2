@@ -1,0 +1,1 @@
+/home/cubot/NAV/src/sentry_bringup/scripts/fake_chassis_node.py

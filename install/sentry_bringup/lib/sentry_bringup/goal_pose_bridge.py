@@ -1,0 +1,1 @@
+/home/cubot/NAV/src/sentry_bringup/scripts/goal_pose_bridge.py

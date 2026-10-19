@@ -1,0 +1,286 @@
+# =====================================================================
+# RM2026 哨兵 Nav2 终极解耦版配置 (ROS 2 Jazzy 适用)
+# 核心策略：
+# 1. 统一坐标系：Nav2 全局使用 base_link（fake_vel_transform 已布废，base_footprint_stabilized 不再存在）
+# 2. 轻量化避障：使用 pointcloud_to_laserscan 转换的 2D /scan 数据，释放 CPU 算力
+# 3. 全向PID追踪：禁止 Nav2 产生角速度，仅输出 Vx, Vy 平移指令
+# =====================================================================
+
+bt_navigator:
+  ros__parameters:
+    use_sim_time: False
+    global_frame: map
+    robot_base_frame: base_link                  # 【修】fake_vel 废弃后直接用物理 base_link
+    odom_topic: /Odometry                        # Point-LIO 的里程计
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    # 在 Jazzy 中默认使用官方标准行为树，兼容性最强
+    # 待未来有复杂战术需求时，再替换为自定义的 XML
+
+controller_server:
+  ros__parameters:
+    use_sim_time: False
+    controller_frequency: 20.0
+    odom_topic: /Odometry
+    progress_checker_plugins: ["progress_checker"]
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.2
+      movement_time_allowance: 30.0
+
+    general_goal_checker:
+      stateful: True
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.15      # 【精度】0.5→0.15, 配合 min_speed_xy 精确停点
+      yaw_goal_tolerance: 6.28     # 【舵轮+独立云台架构】≈2π 等价忽略最终朝向, 朝向交云台自瞄
+
+    FollowPath:
+      # 【换回 DWB】OmniPidPursuit 在当前环境不输出 cmd_vel, DWB 之前稳定可靠
+      # DWB 适配全向底盘: vy_samples > 1, max_vel_y 不为 0
+      plugin: "dwb_core::DWBLocalPlanner"
+
+      # ===== 运动学限制 (全向) =====
+      # 【速度上限 3.5 m/s】加速度提至 5.0 m/s² (1.5×原值) 让短路径也能顶速
+      # 【舵轮+独立云台架构】底盘禁止旋转, max_vel_theta=0, vtheta_samples=1, 旋转交云台
+      min_vel_x: -3.0
+      max_vel_x:  3.0
+      min_vel_y: -3.0                    # 【全向必加】
+      max_vel_y:  3.0
+      max_vel_theta:  0.0                # 【锁 wz=0】底盘不响应旋转
+      min_speed_xy:    1.0                  # 【上坡】0.5→1.0, 冲坡最低速度翻倍
+      max_speed_xy:    3.5
+      min_speed_theta: 0.0
+      acc_lim_x:     5.0                  # 【上坡】3→5, 短距离快速提速冲坡
+      acc_lim_y:     5.0                  # 【上坡】全向同步
+      acc_lim_theta: 3.2                  # DWB 校验需 >0, 但 max_vel_theta=0 实际不用
+      decel_lim_x:     -15.0              # 【上坡】-6→-15, 0.23s 刹停, 冲坡不减速
+      decel_lim_y:     -15.0              # 【上坡】全向同步
+      decel_lim_theta: -3.2                # DWB 校验需 <0, 但 max_vel_theta=0 实际不用
+
+      # ===== 采样 (全向需 vy_samples > 1) =====
+      vx_samples: 30                      # 【提】 20→30, 采样更密, 顶速轨迹更有机会被选中
+      vy_samples: 5                       # 【全向必加】差速车设 1
+      vtheta_samples: 1                   # 【锁 wz=0】只采样 wz=0 这一种
+      sim_time: 0.5                       # 【上坡】1.0→0.5, 前瞻减半, 不到坡底不减速
+      linear_granularity: 0.05
+      angular_granularity: 0.025
+      transform_tolerance: 0.2
+      xy_goal_tolerance: 0.15
+      trans_stopped_velocity: 0.05
+      short_circuit_trajectory_evaluation: True
+      stateful: True
+
+      # ===== Critic (评价轨迹) =====
+      # 【舵轮+独立云台架构】移除 RotateToGoal critic, 否则到达 goal 时一直拒收 wz=0 的轨迹
+      # 【调优】升 PathDist + PathAlign (紧贴路径) + 降 GoalDist (减少抄近道) → 严格循迹
+      critics: ["Oscillation", "GoalAlign", "PathAlign", "PathDist", "GoalDist", "BaseObstacle"]
+      BaseObstacle.scale: 0.1
+      PathAlign.scale: 100.0                # 【升】 32→48, 强化路径方向对齐, 减少摆动
+      PathAlign.forward_point_distance: 0.1
+      GoalAlign.scale: 200.0                # 保持, 朝向目标权重
+      GoalAlign.forward_point_distance: 0.1
+      PathDist.scale: 200.0                 # 【升】 32→48, 紧贴路径中线, 拒绝抄近道
+      GoalDist.scale: 0.0                 # 【降】 32→20, 减少目标引力, 防止脱离路径
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: False
+      update_frequency: 10.0
+      publish_frequency: 5.0
+      global_frame: odom
+      robot_base_frame: base_link               # 【修】fake_vel 废弃后直接用物理 base_link
+      rolling_window: true
+      width: 6
+      height: 6
+      resolution: 0.05
+      robot_radius: 0.35                          # 底盘半径33cm + 2cm安全余量，小陀螺自转不刮蹭
+      plugins: ["obstacle_layer", "inflation_layer"]
+      
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: scan
+        scan:
+          topic: /scan                          # 【临时】/scan 不存在但 LaserScan source nav2 能 activate, 只是不更新点
+          data_type: "LaserScan"
+          clearing: True
+          marking: True
+          max_obstacle_height: 1.5
+          min_obstacle_height: 0.1
+
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 5.0                # 代价值适中衰减
+        inflation_radius: 0.36                  # 恢复 0.36m，给 BaseObstacle 紧贴机器人半径做局部避障
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: False
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: map
+      robot_base_frame: base_link               # 【修】fake_vel 废弃后直接用物理 base_link
+      robot_radius: 0.35
+      resolution: 0.05
+      track_unknown_space: true
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: True
+      
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: scan
+        scan:
+          topic: /scan
+          data_type: "LaserScan"
+          clearing: True
+          marking: True
+          max_obstacle_height: 1.5
+          min_obstacle_height: 0.1
+          
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 4.0                # 代价值适中衰减
+        inflation_radius: 0.33                  # 恢复 0.36m
+
+planner_server:
+  ros__parameters:
+    use_sim_time: False
+    expected_planner_frequency: 10.0
+    planner_plugins: ["GridBased"]
+    GridBased:
+      # 在解耦二维平移的逻辑下，标准 A* 或 NavFn 是最高效的全局规划器
+      plugin: "nav2_navfn_planner::NavfnPlanner"
+      tolerance: 0.5
+      use_astar: false
+      allow_unknown: true
+
+behavior_server:
+  ros__parameters:
+    use_sim_time: False
+    local_costmap_topic: local_costmap/costmap_raw
+    global_costmap_topic: global_costmap/costmap_raw
+    local_footprint_topic: local_costmap/published_footprint
+    global_footprint_topic: global_costmap/published_footprint
+    cycle_frequency: 10.0
+    # 【舵轮+独立云台决策】Spin plugin 必须保留 (Nav2 默认 BT XML 硬引用 spin action)
+    # 但参数限到几乎不动: 即使 BT 触发 Recovery, 底盘也不会真的自转
+    # → 避免 Spin 转底盘后 fake_vel_transform 把 DWB 的 vx 错位成 vy
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]
+    # 【Jazzy 修复】插件名格式从 "nav2_behaviors/Spin" 改为 "nav2_behaviors::Spin"
+    spin:
+      plugin: "nav2_behaviors::Spin"
+      max_rotational_vel: 0.01          # 【哑火】极低转速, 舵轮底盘禁止自转
+      min_rotational_vel: 0.01
+      rotational_acc_lim: 0.01
+    backup:
+      plugin: "nav2_behaviors::BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors::DriveOnHeading"
+    wait:
+      plugin: "nav2_behaviors::Wait"
+    local_frame: odom
+    global_frame: map
+    robot_base_frame: base_link                 # 【修】fake_vel 废弃后直接用物理 base_link
+    transform_tolerance: 0.1
+
+waypoint_follower:
+  ros__parameters:
+    use_sim_time: False
+    loop_rate: 20
+    stop_on_failure: false
+    waypoint_task_executor_plugin: "wait_at_waypoint"
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
+      enabled: True
+      waypoint_pause_duration: 200
+
+# =====================================================================
+# velocity_smoother / collision_monitor / docking_server: Jazzy 默认节点
+# - velocity_smoother: 启用 (低通滤波 + 最大加减速限制)
+# - collision_monitor: 【赛场配置】启用, approach 模式动态避坏, 防敢机器人撞车
+# - docking_server : 保留最小配置 (不启动, 仅防某些依赖缺参报错)
+# =====================================================================
+
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: False
+    smoothing_frequency: 20.0
+    scale_velocities: False
+    feedback: "OPEN_LOOP"
+    max_velocity: [3.5, 3.5, 0.0]       # 【舵轮+独立云台】wz 锁 0
+    min_velocity: [-3.5, -3.5, 0.0]
+    max_accel: [5.0, 5.0, 3.2]           # 【同步 DWB】加速 3.0→5.0, 防止 smoother 拖后腿
+    max_decel: [-15.0, -15.0, -3.2]      # 【同步 DWB】-6→-15, 0.23s 刹停
+    odom_topic: "/Odometry"
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0
+
+# ---------------------------------------------------------------------
+# collision_monitor (赛场配置)
+# ---------------------------------------------------------------------
+# 数据流 (与 launch 中的 cmd_vel 重映射一致):
+#   controller_server  --(cmd_vel_nav)-->  velocity_smoother
+#   velocity_smoother  --(cmd_vel_smoothed)-->  collision_monitor
+#   collision_monitor  --(cmd_vel)-->  serial_send_node 底盘
+#
+# 赛场调优原则:
+#   1. action_type 用 approach (平滑减速), 不用 stop (会被卡身位死锁)
+#   2. polygon 仅贴身身体 (30x40 cm), 远距离不误触
+#   3. time_before_collision = 0.5s (原默认 1.2s 太长, 主动逼近时会被自己刹死)
+#   4. min_points = 8 抗单点噪声误触发
+#   5. scan 高度 0.10~0.80m 只看车体, 忽略地面/天花板
+# ---------------------------------------------------------------------
+collision_monitor:
+  ros__parameters:
+    use_sim_time: False
+    base_frame_id: "base_link"           # 【修】原 base_footprint_stabilized 不存在
+    odom_frame_id: "odom"
+    cmd_vel_in_topic: "cmd_vel_smoothed"
+    cmd_vel_out_topic: "cmd_vel"
+    state_topic: "collision_monitor_state"
+    transform_tolerance: 0.5
+    source_timeout: 2.0                  # scan 超过 2s 无数据 → 报错不拦截
+    base_shift_correction: True
+    stop_pub_timeout: 2.0
+    polygons: ["FootprintApproach"]
+    FootprintApproach:
+      type: "polygon"
+      # 【修】原 [-0.10, +0.30]×±0.20 跨过 base_link 且 polygon 在车体内部 (底盘半径 0.331m)
+      # 现: 起点 0.40m (底盘半径 + 7cm 余量), 终点 0.90m (前方 50cm 检测带), ±0.35m (车宽 0.66m + 2cm 余量)
+      points: "[[0.90, 0.35], [0.90, -0.35], [0.40, -0.35], [0.40, 0.35]]"
+      action_type: "approach"            # 平滑减速, 不是刹死
+      time_before_collision: 0.5         # 撞前 0.5s 才介入 (复杂赛场需要迅速反应)
+      simulation_time_step: 0.05
+      min_points: 5                      # 【修】调低到 5, 但配合缩小 polygon 仍可靠
+      visualize: True                    # RViz 可看多边形
+      enabled: True
+    observation_sources: ["pointcloud"]
+    pointcloud:
+      type: "pointcloud"
+      # 【修】项目删了 pointcloud_to_laserscan节点, /scan 不存在
+      # 直接订 Point-LIO /cloud_registered (已在 base_link 系)
+      topic: "/cloud_registered"
+      min_height: 0.085                  # 85mm，覆盖车体底部
+      max_height: 0.55                   # 550mm，覆盖车体顶部
+      enabled: True
+
+docking_server:
+  ros__parameters:
+    use_sim_time: False
+    controller_frequency: 50.0
+    initial_perception_timeout: 5.0
+    wait_charge_timeout: 5.0
+    dock_plugins: ["simple_charging_dock"]
+    simple_charging_dock:
+      plugin: "opennav_docking::SimpleChargingDock"
+    docks: []

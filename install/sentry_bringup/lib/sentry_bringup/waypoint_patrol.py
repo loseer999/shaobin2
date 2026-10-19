@@ -1,0 +1,1 @@
+/home/cubot/NAV/src/sentry_bringup/scripts/waypoint_patrol.py

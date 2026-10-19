@@ -1,0 +1,1 @@
+/home/cubot/NAV/build/serial/ament_cmake_environment_hooks/local_setup.bash

@@ -1,0 +1,20 @@
+<launch>
+    <!-- 串口设备参数 -->
+    <arg name="port" default="/dev/ttyACM0"/>
+    <arg name="baud_rate" default="500000"/>
+    <arg name="speed_scale" default="1.0"/>
+    
+    <!-- TX 发送频率，与 Nav2 controller_frequency 同步 (默认 30Hz) -->
+    <arg name="tx_frequency" default="30.0"/>
+    
+    <!-- arrive 默认值 (0=导航中, 1=已到达) -->
+    <arg name="default_arrive" default="0"/>
+    
+    <node pkg="sentry_serial" type="sentry_send" name="sentry_send" output="screen" 
+          args="$(arg port) $(arg speed_scale)">
+        <param name="cmd_vel_topic" value="cmd_vel"/>
+        <param name="baud_rate" value="$(arg baud_rate)"/>
+        <param name="tx_frequency" value="$(arg tx_frequency)"/>
+        <param name="default_arrive" value="$(arg default_arrive)"/>
+    </node>
+</launch>
